@@ -1,5 +1,8 @@
 import os
+MDIR = os.path.dirname(os.path.abspath(__file__))
 import sys
+SAM2= os.path.join(MDIR, "sam2")
+sys.path.insert(0,SAM2)
 import traceback
 
 import cv2
@@ -16,6 +19,7 @@ import logging
 from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
 from PySide6.QtWidgets import QFileDialog
+os.chdir(f"{MDIR}/sam2")
 
 palette = np.array([
     [0, 0, 0],
