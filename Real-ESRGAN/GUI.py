@@ -1,7 +1,9 @@
 import logging
 import math
 import os
+import shutil
 import sys
+import traceback
 
 MDIR = os.path.dirname(os.path.abspath(__file__))
 GIT_DIR = os.path.join(MDIR, "Real-ESRGAN")
@@ -105,6 +107,7 @@ class RealESRGANGUI(QMainWindow):
         self.denoise_strength_edit = TitledLineEdit("去噪强度:", self)
         self.denoise_strength_edit.setText("1.0")
         self.denoise_strength_edit.setValidator(double_validator)
+        self.face_enhance_cbk = QCheckBox("人脸增强")
 
         self.progress_bar = QProgressBar(self)
         self.progress_bar.setFocusPolicy(Qt.NoFocus)
@@ -119,6 +122,7 @@ class RealESRGANGUI(QMainWindow):
         right_panel.addWidget(self.slide_size_edit)
         right_panel.addWidget(self.slide_overlap_edit)
         right_panel.addWidget(self.denoise_strength_edit)
+        right_panel.addWidget(self.face_enhance_cbk)
         # right_panel.addWidget(self.step_edit)
         # right_panel.addWidget(self.cfg_edit)
         right_panel.addWidget(self.model_path_edit)
@@ -149,6 +153,7 @@ class RealESRGANGUI(QMainWindow):
         self.latest_save_dir = ""
         self.setGeometry(100, 100, 1200, 800)
         self.dsz = 512
+        self.face_enhancer = None
 
     def load_model(self):
         model_name = self.model_combox.currentText()
@@ -212,6 +217,32 @@ class RealESRGANGUI(QMainWindow):
                     half=False, #not args.fp32,
                     gpu_id=self.device),netscale)#args.gpu_id)
             self.show_status("info", f"{model_name} loaded")
+
+    def load_gfpgan(self):
+        from gfpgan import GFPGANer
+        model_dir = f"{MDIR}/weights"
+        if self.face_enhancer is None:
+            detection_path = f"{model_dir}/weights/gfpgan/weights/detection_Resnet50_Final.pth"
+            parsing_path = f"{model_dir}/weights/gfpgan/weights/parsing_parsenet.pth"
+            gfpgan_dir = f"{model_dir}/Real-ESRGAN/gfpgan/weights"
+            if os.path.isfile(detection_path) or os.path.isfile(parsing_path):
+                os.makedirs(gfpgan_dir,exist_ok=True)
+                dpath = f"{gfpgan_dir}/detection_Resnet50_Final.pth"
+                if not os.path.isfile(dpath) and os.path.isfile(detection_path):
+                    shutil.copy(detection_path, dpath)
+                dpath = f"{gfpgan_dir}/parsing_parsenet.pth"
+                if not os.path.isfile(dpath) and os.path.isfile(parsing_path):
+                    shutil.copy(parsing_path, dpath)
+
+            model_path = f"{model_dir}/GFPGANv1.3.pth"
+            if not os.path.isfile(model_path):
+                model_path = 'https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.3.pth'
+            self.face_enhancer = GFPGANer(
+                model_path=model_path,
+                upscale=self.model[2],
+                arch='clean',
+                channel_multiplier=2,
+                bg_upsampler=self.model[1])
 
     def load_files(self):
         # 设置文件对话框选项
@@ -312,69 +343,87 @@ class RealESRGANGUI(QMainWindow):
             self.setWindowTitle(f"{self.title} - {fname}")
             self.show_status()
 
+
+    def enhance_face(self, img):
+        self.load_gfpgan()
+        self.face_enhancer.upscale = self.model[2]
+        self.face_enhancer.bg_upsampler = self.model[1]
+        _, _, output = self.face_enhancer.enhance(img, has_aligned=False, only_center_face=False, paste_back=True)
+        return output
+
     def run(self):
         imh, imw = self.curr_img.shape[:2]
         self.load_model()
         upsampler = self.model[1]
-        win_sz = max(0, int(self.slide_size_edit.text()))
-        win_pad = max(0, int(self.slide_overlap_edit.text()))
-        if win_sz == 0:
-            win_sz = max(imw, imh)
-        if win_pad == 0:
-            win_pad = min(imw, imh) // 10
-        count_x = math.ceil(imw / win_sz)
-        count_y = math.ceil(imh / win_sz)
-        scale = self.model[2]
-        self.progress_bar.setRange(0, count_x * count_y)
-        self.curr_result = np.zeros((imh*scale, imw*scale,3), dtype=np.uint8)
-        for y in range(count_y):
-            for x in range(count_x):
-                # extract tile from input image
-                ofs_x = x * win_sz
-                ofs_y = y * win_sz
-                # input tile area on total image
-                input_start_x = ofs_x
-                input_end_x = min(ofs_x + win_sz, imw)
-                input_start_y = ofs_y
-                input_end_y = min(ofs_y + win_sz, imh)
+        if self.face_enhance_cbk.checkState() == Qt.CheckState.Checked:
+            self.show_status("info", "人脸增强")
+            self.progress_bar.setRange(0, 1)
+            try:
+                self.curr_result = self.enhance_face(self.curr_img)
+            except:
+                traceback.print_exc()
+                self.show_status("error", "人脸增强失败")
+            self.progress_bar.setValue(1)
+        else:
+            win_sz = max(0, int(self.slide_size_edit.text()))
+            win_pad = max(0, int(self.slide_overlap_edit.text()))
+            if win_sz == 0:
+                win_sz = max(imw, imh)
+            if win_pad == 0:
+                win_pad = min(imw, imh) // 10
+            count_x = math.ceil(imw / win_sz)
+            count_y = math.ceil(imh / win_sz)
+            scale = self.model[2]
+            self.progress_bar.setRange(0, count_x * count_y)
+            self.curr_result = np.zeros((imh*scale, imw*scale,3), dtype=np.uint8)
+            for y in range(count_y):
+                for x in range(count_x):
+                    # extract tile from input image
+                    ofs_x = x * win_sz
+                    ofs_y = y * win_sz
+                    # input tile area on total image
+                    input_start_x = ofs_x
+                    input_end_x = min(ofs_x + win_sz, imw)
+                    input_start_y = ofs_y
+                    input_end_y = min(ofs_y + win_sz, imh)
 
-                # input tile area on total image with padding
-                input_start_x_pad = max(input_start_x - win_pad, 0)
-                input_end_x_pad = min(input_end_x + win_pad, imw)
-                input_start_y_pad = max(input_start_y - win_pad, 0)
-                input_end_y_pad = min(input_end_y + win_pad, imh)
+                    # input tile area on total image with padding
+                    input_start_x_pad = max(input_start_x - win_pad, 0)
+                    input_end_x_pad = min(input_end_x + win_pad, imw)
+                    input_start_y_pad = max(input_start_y - win_pad, 0)
+                    input_end_y_pad = min(input_end_y + win_pad, imh)
 
-                # input tile dimensions
-                input_tile_width = input_end_x - input_start_x
-                input_tile_height = input_end_y - input_start_y
-                tile_idx = y * count_x + x + 1
-                input_tile = self.curr_img[input_start_y_pad:input_end_y_pad, input_start_x_pad:input_end_x_pad]
+                    # input tile dimensions
+                    input_tile_width = input_end_x - input_start_x
+                    input_tile_height = input_end_y - input_start_y
+                    tile_idx = y * count_x + x + 1
+                    input_tile = self.curr_img[input_start_y_pad:input_end_y_pad, input_start_x_pad:input_end_x_pad]
 
-                # upscale tile
-                try:
-                    with torch.no_grad():
-                        output_tile, _ = upsampler.enhance(input_tile)
-                except RuntimeError as error:
-                    print('Error', error)
-                    self.show_status("error", error)
-                self.progress_bar.setValue(tile_idx)
+                    # upscale tile
+                    try:
+                        with torch.no_grad():
+                            output_tile, _ = upsampler.enhance(input_tile)
+                    except RuntimeError as error:
+                        traceback.print_exc()
+                        self.show_status("error", error)
+                    self.progress_bar.setValue(tile_idx)
 
-                # output tile area on total image
-                output_start_x = input_start_x * scale
-                output_end_x = input_end_x * scale
-                output_start_y = input_start_y * scale
-                output_end_y = input_end_y * scale
+                    # output tile area on total image
+                    output_start_x = input_start_x * scale
+                    output_end_x = input_end_x * scale
+                    output_start_y = input_start_y * scale
+                    output_end_y = input_end_y * scale
 
-                # output tile area without padding
-                output_start_x_tile = (input_start_x - input_start_x_pad) * scale
-                output_end_x_tile = output_start_x_tile + input_tile_width * scale
-                output_start_y_tile = (input_start_y - input_start_y_pad) * scale
-                output_end_y_tile = output_start_y_tile + input_tile_height * scale
+                    # output tile area without padding
+                    output_start_x_tile = (input_start_x - input_start_x_pad) * scale
+                    output_end_x_tile = output_start_x_tile + input_tile_width * scale
+                    output_start_y_tile = (input_start_y - input_start_y_pad) * scale
+                    output_end_y_tile = output_start_y_tile + input_tile_height * scale
 
-                # put tile into output image
-                self.curr_result[output_start_y:output_end_y,
-                output_start_x:output_end_x] = output_tile[output_start_y_tile:output_end_y_tile,
-                                               output_start_x_tile:output_end_x_tile]
+                    # put tile into output image
+                    self.curr_result[output_start_y:output_end_y,
+                        output_start_x:output_end_x] = output_tile[output_start_y_tile:output_end_y_tile,
+                                                   output_start_x_tile:output_end_x_tile]
 
         self.image_viewer.set_result_image(cv2.cvtColor(self.curr_result, cv2.COLOR_BGR2RGB))
         self.image_viewer.show_result()
