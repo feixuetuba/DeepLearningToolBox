@@ -487,9 +487,6 @@ def select_gpu(min_memory_available=35, verbose=True, use_minium=True):
 
 if __name__ == "__main__":
     gpu_id =0
-    if gpu_id < 0:
-        print("至少要35G的显存才能运行， 没有符合条件的显卡")
-        exit(-1)
     device = f"{gpu_id}"
 
     logging.basicConfig(level=logging.INFO)
