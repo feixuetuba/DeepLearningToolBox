@@ -4,3 +4,4 @@ SAM2/sam2
 Real-ESRGAN/Real-ESRGAN
 Real-ESRGAN/weights
 */__pycache__/*
+*/weights/*

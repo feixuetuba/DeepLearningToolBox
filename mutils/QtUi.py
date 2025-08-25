@@ -1,9 +1,10 @@
+import math
 import os
 
-from PySide6 import QtCore
+from PySide6 import QtCore, QtWidgets, QtGui
 from PySide6.QtCore import QPointF, Qt, Signal
 from PySide6.QtGui import QPainter, QBrush, QPen, QColor, QImage, QMouseEvent, QWheelEvent
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit, QFileDialog
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit, QFileDialog, QGridLayout
 
 
 class MImageViewer(QWidget):
@@ -38,6 +39,11 @@ class MImageViewer(QWidget):
             pen.setWidth(2)
             self.pens.append(pen)
         self.point_radius = 5
+
+    def reset(self):
+        self.current_scale = 1.0  # 重置缩放
+        self.image_pos = QPointF(0, 0)  # 重置位置
+        self.show_original = True
 
     def trans_img(self, img_array):
         h, w, ch = img_array.shape
@@ -242,15 +248,35 @@ class TitledLineEdit(QWidget):
         return self.edit
 
 
-def createPannel(widgets, parent=None, horizontal=True):
+def createPannel(widgets, parent=None, shape="1xn"):
     pannel = QWidget(parent)
-    if horizontal:
-        layout = QHBoxLayout()
+    row, col = shape.split("x")
+    row = row.lower()
+    col = col.lower()
+    n = len(widgets)
+    if row == "n":
+        row = 0
     else:
-        layout = QVBoxLayout()
-    for w in widgets:
-        layout.addWidget(w)
-    pannel.setLayout(layout)
+        row = int(row)
+    if col == "n":
+        col = 0
+    else:
+        col = int(col)
+
+    if row == 0 and col == 0:
+        row = col = math.ceil(n**0.5)
+    elif row == 0:
+        row = math.ceil(col / n)
+    elif col == 0:
+        col = math.ceil(row / n)
+
+    gLayout = QGridLayout()
+    idx = 0
+    for y in range(row):
+        for x in range(col):
+            gLayout.addWidget(widgets[idx], y, x, 1, 1)
+            idx +=1
+    pannel.setLayout(gLayout)
     return pannel
 
 
@@ -295,4 +321,27 @@ def getFileSelectDialog(parent=None, showRoot=True):
 
 
 
+class DraggableListWidget(QtWidgets.QListWidget):
+    """List widget supporting drag & drop of files (images)."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
 
+    def dragEnterEvent(self, e: QtGui.QDragEnterEvent):
+        if e.mimeData().hasUrls():
+            e.acceptProposedAction()
+        else:
+            super().dragEnterEvent(e)
+
+    def dropEvent(self, e: QtGui.QDropEvent):
+        if e.mimeData().hasUrls():
+            paths = []
+            for u in e.mimeData().urls():
+                p = u.toLocalFile()
+                if p:
+                    paths.append(p)
+            self.parent().add_files(paths)
+            e.acceptProposedAction()
+        else:
+            super().dropEvent(e)
